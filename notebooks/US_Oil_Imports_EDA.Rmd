@@ -1,0 +1,591 @@
+---
+title: "US Oil Imports EDA"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(lvplot)
+```
+
+
+## Load the data
+This data was downloaded from Kaggle:
+https://www.kaggle.com/datasets/alistairking/u-s-crude-oil-imports
+
+Let's load the dataset and take a quick glance at it.
+
+```{r}
+oil <- read.csv("../data/USOilImports.csv")
+head(oil)
+```
+
+
+## Explore the structure of the data
+To begin, let's examine, what kind of data we have at hand and if it's tidy or not
+
+
+```{r}
+missing_per_column <- colSums(is.na(oil))
+missing_per_column <- tibble(column_names = names(missing_per_column), missing_counts = missing_per_column)
+missing_per_column
+```
+
+The data is tidy - there are no missing values.
+
+- Brief explanation of the columns: 
+  * year: The year of crude oil import
+  * month: The month of crude oil import
+  * originName: The name of the place where the crude oil was exported from.
+  * originTypeName: The type of location the crude oil was exported from (e.g. country, region, etc.).
+  * destinationName: The name of the place in the U.S. receiving the crude oil.
+  * destinationTypeName: The type of destination (e.g., port, refinery).
+  * gradeName: The grade or type of crude oil imported (e.g., Light Sweet, Heavy Sour).
+  * quantity: The volume of crude oil imported, measured in thousands of barrels.
+  
+Let's find the number of unique values per column and list/summarize them, as well as clarify some background information.
+
+```{r}
+summarise_all(oil, n_distinct)
+```
+
+The data spans 16 years. There are 4 types of places, which export the oil, 7 different types of sites, which import crude oil and 456 distinct receivers.
+Imported oil is divided into 5 groups according to its grade (quality).
+
+Let's look more closely at the origin types, destination types and grades of the oil.
+
+```{r}
+# Origin types
+ggplot(oil) +
+  geom_bar(aes(x = originTypeName))
+```
+
+OriginTypeName refers to the kind of exporting site. The names themselves are not very descriptive (how does the "world" category differ from "country",
+how is "region" defined, what does it mean that the origin is both OPEC and non-OPEC etc.) and the data wasn't provided with a documentation.
+
+However, if we saw with what origin names are these origin types connected, maybe we could conclude something reasonable.
+
+```{r, fig.height=7}
+oil %>%
+  filter(originTypeName == "Country") %>%
+  group_by(originName) %>%
+  count() %>%
+  ggplot(aes(y = reorder(originName,n), x = n)) +
+  geom_bar(stat = "identity", width = 0.75) +
+  coord_cartesian(xlim = c(0,12000)) +
+  ylab("Country") 
+```
+
+Country is just what it says, obviously. There are data entries were the country is "not known" (likely missing values filled by the author of the dataset).
+
+```{r}
+oil %>%
+  filter(originName == "Country not known") %>%
+  group_by(year) %>%
+  count() %>%
+  ggplot(aes(x = year, y = n)) +
+  geom_bar(stat = "identity")
+```
+
+All of the entries, where the data about country name is not available come from recent years.
+
+Next, OPEC/non-OPEC.
+
+```{r}
+oil %>%
+  filter(originTypeName == "OPEC/non-OPEC") %>%
+  group_by(originName) %>%
+  count()
+```
+This is not very informative either. OPEC is an organization including some of the East Asian countries (eg. Saudi Arabia, Kuwait, Iran etc.). What it might
+mean, is that the information about the transaction is doubled (for example Kuwait is an OPEC member, but is also listed under "Country" category). Or, that the dataset contains information about completely different groups of transactions (one classified according to OPEC/non-OPEC membership and one classified according to the country).
+
+Let's see, what origin names hide under the "Region" category.
+
+```{r}
+oil %>%
+  filter(originTypeName == "Region") %>%
+  group_by(originName) %>%
+  count() %>%
+  ggplot(aes(y = reorder(originName,n), x = n)) +
+  geom_bar(stat = "identity", width = 0.75) +
+  ylab("Region") 
+```
+Now it makes more sense - originType "region" is just a broad category encompassing entire, well, regions of the world. There are categories "Canada" and "Other Americas", which probably represent oil import from North America (Canada region) and South/Central America respectively.
+
+The last category - "World".
+
+```{r}
+oil %>%
+  filter(originTypeName == "World") %>%
+  group_by(originName) %>%
+  count()
+```
+
+Unfortunately, "World" is the orign name in every case.
+
+Let's compare the entries from "Country" and "World" categories in order to confirm, if one can be a subset of the other.
+
+```{r}
+origin_type_country <- filter(oil, originTypeName == 'Country') %>% select(-originName, -originTypeName)
+origin_type_world <- filter(oil, originTypeName == 'World') %>% select(-originName, -originTypeName)
+origin_type_opec <- filter(oil, originTypeName == 'OPEC/non-OPEC') %>% select(-originName, -originTypeName)
+semi_join(origin_type_country, origin_type_world) # Returns all rows from origin_type_country with a match in origin_type_world
+```
+
+There seem to be many entries, which are identical except for originName and originTypeName. It might confirm, that the hypothesis about distinct/disjoint subsets in the dataset was correct. This is later confirmed by a huge amount of duplicated rows (without regard to originName and originTypeName) in the dataframe in comparison to the total number of data entries.
+
+
+```{r}
+oil %>% select(-originName, -originTypeName) %>% duplicated() %>% sum()
+```
+
+```{r}
+nrow(oil)
+```
+
+This means, that the data might have been collected from U.S. Energy Information Administration service API using different filters, which could have produced overlapping datasets. Let's keep it in mind.
+
+Now, let's visualize the distribution of destinationTypes.
+
+```{r}
+ggplot(oil) +
+  geom_bar(aes(x = destinationTypeName))
+```
+
+Note: PADD = Petroleum Administration for Defense Districts - geographic aggregations of the 50 States and the District of Columbia into five districts: PADD 1 is the East Coast, PADD 2 the Midwest, PADD 3 the Gulf Coast, PADD 4 the Rocky Mountain Region, and PADD 5 the West Coast (source: https://www.eia.gov/todayinenergy/detail.php?id=4890).
+
+There are five PADDs and information about which PAAD a port or a refinery refer to is contained in the destinationName. No information about the difference between "Port", "Port PAAD" and "Port State" is available, but maybe a quick glance at destination names associated with them will shed some light. Let's focus only on origin of type "Country".
+
+```{r}
+oil %>%
+  filter(destinationTypeName %in% c('Port','Port PADD','Port State'), originTypeName == "Country") 
+```
+
+Destination names, which correspond to "Port" have the following format: City, two-letter abbreviation of the name of the state. For state port, the destination name contains only the name of the state. Port PADD indicated, which PADD it refers to (there is also 6th PADD, called "Territories"). Usage of "Port" type is probably more preferred due to larger amount of information conveyed by destination name (both city and the state) in comparison to "Port State", which displays only information about the state (this could mean, that the oil was imported to the port located in the capital of the state, but this information is not known).
+
+Next, the refineries.
+
+```{r}
+oil %>% filter(destinationTypeName %in% c('Refinery','Refinery PADD','Refinery State'), originTypeName == "Country")
+```
+
+Here, the naming convention is similar as in the case above.
+
+There is also "United States" category.
+
+```{r}
+oil %>%
+  filter(originTypeName == "Country", destinationTypeName == "United States") %>%
+  select(destinationName) %>%
+  unique()
+```
+
+The exact location is not known in this case, because both destinationTypeName and destinationName are classified as "United States" in each case. But this type might refer to the total import in given year. How many entries with "United States" are there in each year?
+
+```{r}
+oil %>%
+  filter(destinationTypeName == "United States") %>%
+  group_by(year) %>%
+  summarise(count = n())
+```
+
+Unfortunately, it does not seem to be the case.
+
+Next, the grades of the oil.
+
+```{r}
+ggplot(oil) +
+  geom_bar(aes(x = gradeName))
+```
+
+Note: "Sweet" and "Sour" classify crude oil as having low or high impurity sulphur content respectively. Crude oil is classified as sour if it contains more than 0.5 wt% sulphur and as sweet otherwise. Sweet crude oil is more attractive due to lower processing requirements (purification), which affects the price of the commodity. The distinction between Heavy and Light crude oil is related to its physicochemical properties (density, viscosity, API gravity etc.).
+
+Medium crude oil, according to welker.com (https://www.welker.com/medium-crude):
+"Medium crude oils are the most common type of crude oil. They are more viscous than light crude, with an API gravity between 22.3° and 31.1° API. However, they are less volatile than light crude oils and are therefore less susceptible to evaporation."
+
+On the other hand, the scale according to Brittanica is (https://www.britannica.com/science/crude-oil):
+"On the basis of their API gravity, crude oils can be classified as heavy, medium, and light as follows:
+  Heavy: 10–20° API gravity, 
+  Medium: 20–25° API gravity, 
+  Light: above 25° API gravity"
+  
+Now let's look at the distributions of year, month and quantity, in order to see if there are any unususal values.
+
+```{r}
+p1 <- ggplot(oil) +
+  geom_bar(aes(x = year)) +
+  scale_x_continuous(breaks = 2009:2024) +
+  ggtitle("Distribution of year")
+
+p2 <- ggplot(oil) +
+  geom_bar(aes(x = month)) + 
+  scale_x_continuous(breaks = 1:12) +
+  ggtitle("Distribution of month")
+
+p1 + p2 + plot_layout(nrow = 2)
+
+```
+
+Is there data for all 12 months in each year?
+
+```{r}
+oil %>%
+  group_by(year) %>%
+  count(month) %>%
+  ggplot() +
+  geom_tile(aes(x = year, y = month, fill = n)) +
+  scale_x_continuous(breaks = 2009:2024) +
+  scale_y_continuous(breaks = 1:12) 
+```
+
+The data for 2024 is available only for January.
+
+Keeping in mind, that there may possibly be many data duplicates differing with only the classification of the origin type, let's check the data availability but only for entries with origin classified as "Country" (which I personally find the most interesting one).
+
+```{r}
+oil %>%
+  filter(originTypeName == "Country") %>%
+  group_by(year) %>%
+  count(month) %>%
+  ggplot() +
+  geom_tile(aes(x = year, y = month, fill = n)) +
+  scale_x_continuous(breaks = 2009:2024) +
+  scale_y_continuous(breaks = 1:12) 
+```
+
+It seems, that there is data for every month.
+
+Further analysis will be concerned only with the subset of the data with origin type classified as "Country"
+
+```{r}
+oil_country <- filter(oil, originTypeName == "Country")
+```
+
+What's the distribution of import quantity?
+
+```{r}
+ggplot(oil_country) +
+  geom_histogram(aes(x = quantity), binwidth = 200) +
+  coord_cartesian(ylim = c(0,5000)) +
+  scale_x_continuous(breaks = seq(0,1e6,10000))
+```
+The distribution is heavily right-skewed, with majority of purchases falling below 10000 barrels. 
+
+```{r}
+summary(oil_country$quantity)
+```
+
+The largest quantity bought was over 94K. Is this a plausible value? Who bought it?
+
+```{r}
+oil_country %>% filter(quantity == max(quantity))
+```
+
+What percentage of large (>10000 barrels) purchases can be attributed to "United States" as a destination type?
+
+```{r}
+oil_country %>%
+  filter(quantity > 10000) %>%
+  group_by(destinationTypeName) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n / sum(n) * 100) %>%
+  ggplot() +
+  geom_bar(aes(y = destinationTypeName, x = prop), stat = "identity")
+```
+
+I'm not going to include "United States" as a destination type in the final analysis, because it's not descriptive enough (if it duplicates the information about quantity of imported crude oil, for example through summation of imported quantities from other categories, it might lead to incorrect conclusions). Also, I will be interested only in deliveries to Ports (not Port State or Port PADD), because ultimately they receive the delivery, which can be then redistributed to other sites in the country (refineries).
+
+```{r}
+oil_country <- filter(oil_country, destinationTypeName == "Port")
+```
+
+Let's check the distribution of quantity once more.
+
+```{r}
+ggplot(oil_country) +
+  geom_histogram(aes(x = quantity), binwidth = 200) +
+  coord_cartesian(ylim = c(0,1000)) +
+  scale_x_continuous(breaks = seq(0,1e6,5000))
+```
+The majority of transactions involved less than 10000 barrels. Let's describe a transaction with more than 10000 barrels as "big". How many "big" transactions were related to purchase of Heavy Sour crude oil?
+
+```{r}
+oil_country %>%
+  filter(quantity > 10000) %>%
+  count(gradeName) %>%
+  mutate(percentage = n / sum(n))
+```
+It seems, that Light Sour and Light Sweet oil has never been bought in quantities exceeding 10000 barrels. Moreover 86.6% of these "big" transactions can be attributed to the purchase of Heavy Sour crude oil.
+
+
+## Covariation
+
+Is imported quantity related to the oil grade?
+
+```{r}
+ggplot(oil_country) +
+  geom_lv(aes(x = gradeName, y = quantity))
+```
+
+Most of large-quantity transactions come from heavy sour and medium crude oil purchases.
+
+How did the amount of imported crude oil delivered to Ports change across the years (a.k.a. total import per year)?
+
+```{r}
+oil_country %>%
+  filter(year < 2024) %>%
+  group_by(year) %>%
+  summarise(total_import = sum(quantity)) %>%
+  ggplot(aes(x = year, y = total_import)) +
+  geom_bar(stat = "identity") +
+  scale_x_continuous(breaks = 2009:2023)
+```
+
+Crude oil import systematically declines since 2009 (data for 2024 comes only from January).
+
+How does the import differ in terms of oil grade?
+
+```{r}
+oil_import_by_grade <- 
+  oil_country %>%
+  group_by(year, gradeName) %>%
+  summarise(total_import = sum(quantity)) 
+
+oil_import_by_grade <-
+  oil_import_by_grade %>%
+  group_by(year) %>%
+  mutate(prop = total_import / sum(total_import) * 100)
+
+oil_import_by_grade %>%
+  ggplot(aes(y = prop, x = year, fill = gradeName)) +
+  geom_bar(stat = "identity")
+```
+Each year, heavy sour crude oil constitutes the majority of imports, followed by medium and light sweet crude oil. Import of heavy sour crude oil was increasing across they years at the expense of other grades.
+
+Which countries were the largest oil suppliers, by percentage?
+
+```{r}
+oil_import_by_country <- 
+  oil_country %>%
+  group_by(year, originName) %>%
+  summarise(total_import = sum(quantity)) 
+
+oil_import_by_country_grouped <-
+  oil_import_by_country %>%
+  group_by(year) %>%
+  mutate(prop = total_import / sum(total_import) * 100) %>%
+  mutate(rank = row_number(desc(prop))) %>%
+  mutate(originName = case_when (
+    rank <= 5 ~ as.character(originName),
+    TRUE ~ "Other"
+  )) %>%
+  arrange(year, desc(prop))
+
+oil_import_by_country_grouped %>%
+  group_by(year, originName) %>%
+  summarise(percent_import = sum(prop)) %>%
+  ggplot(aes(x = year, y = percent_import, fill = originName)) +
+  geom_bar(stat = "identity")
+```
+Canada massively increased export to USA since 2009. After 2018 USA did not import crude oil from Venezuela (or this country ceased to be among 5 largest exporters).
+
+What kind of oil (heavy, light etc.) is imported from what country (without regard to the year)?
+
+```{r, fig.height=7}
+library(viridis)
+library(RColorBrewer)
+
+oil_country %>%
+  group_by(originName, gradeName) %>%
+  summarise(total_import = sum(quantity)) %>%
+  ggplot(aes(x = gradeName, y = originName)) +
+  geom_tile(aes(fill = total_import)) +
+  scale_fill_distiller(palette = "RdPu", direction = 1)
+```
+Canada export all kinds of crude oil, most of which is heavy sour and medium crude oil. Light sour crude oil is exported by the least number of countries. 
+
+
+What are the 3 largest exporters of crude oil of each grade and how did import from them change over the years?
+
+```{r, fig.height=6}
+oil_import_by_year_grade <-
+  oil_country %>%
+  group_by(year, gradeName, originName) %>%
+  summarise(total_import = sum(quantity)) %>%
+  group_by(year, gradeName) %>%
+  mutate(rank = row_number(desc(total_import))) %>%
+  filter(rank <= 3) 
+
+oil_import_by_year_grade %>%
+  ggplot(aes(x = year, y = total_import, color = originName)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(facets = ~ gradeName, nrow = 5, scales = "free_y") +
+  scale_x_continuous(breaks = 2009:2024)
+```
+Import of Light sweet crude oil from its three best providers is constant since 2009. Medium crude oil has changed one of its 3 top suppliers in 2021, while the other two remained constant, although import from one of them dropped in 2019.
+
+Let's zoom in the dynamics of Heavy Sour and Medium crude oil, as these grades are imported into the country in the highest amounts.
+
+```{r, fig.height=6}
+p1 <-
+  oil_import_by_year_grade %>%
+  filter(gradeName == "Heavy Sour") %>%
+  ggplot(aes(x = year, y = total_import, color = originName)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = 2009:2024) +
+  ggtitle("Heavy Sour")
+
+p2 <-
+  oil_import_by_year_grade %>%
+  filter(gradeName == "Medium") %>%
+  ggplot(aes(x = year, y = total_import, color = originName)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = 2009:2024) +
+  ggtitle("Medium")
+
+p1 + p2 + plot_layout(nrow = 2)
+
+```
+Canada is the largest exporter of both types of crude oil, although it wasn't until 2019 in the case of Medium grade oil. Then, import from Saudi Arabia descreased significantly. In 2019 Venezuela ceased to be the third largest exporter of Heavy Sour crude oil and Colombia took its place.
+
+Where were the largest quantities imported from (choropleth)?
+
+```{r, fig.height=7}
+library(sf)
+tmp_geojson <- tempfile(fileext = ".geojson")
+
+download.file(
+  "https://r2.datahub.io/clvyjaryy0000la0cxieg4o8o/master/raw/data/countries.geojson",
+  tmp_geojson
+)
+
+world_sf <- read_sf(tmp_geojson)
+world_sf_merged <-
+  world_sf %>%
+  left_join(filter(oil_import_by_country, year == 2009), by = c("ADMIN" = "originName")) %>%
+  mutate(total_import = ifelse(is.na(total_import), 0, total_import))
+  
+world_sf_merged %>%
+  mutate(prop = total_import / sum(total_import) * 100) %>%
+  ggplot() +
+  geom_sf(aes(fill = prop), linewidth = 0.1, alpha = 0.9) +
+  theme_void() +
+  scale_fill_distiller(palette = "YlOrRd", direction = 1, name = "Prop")
+  #scale_fill_viridis_c(
+   # trans = "log",
+    #name = "Total import",
+    
+  #)
+```
+
+
+
+
+```{r, fig.height=7}
+world_sf_merged2 <-
+  world_sf %>%
+  left_join(filter(oil_import_by_country, year == 2023), by = c("ADMIN" = "originName")) %>%
+  mutate(total_import = ifelse(is.na(total_import), 0, total_import))
+
+world_sf_merged2 %>%
+  mutate(prop = total_import / sum(total_import) * 100) %>%
+  ggplot() +
+  geom_sf(aes(fill = prop), linewidth = 0.1, alpha = 0.9) +
+  theme_void() +
+  scale_fill_distiller(palette = "YlOrRd", direction = 1, name = "Prop")
+```
+
+
+Which countries were the major exporters in 2009 and 2023?
+```{r}
+exporters2009 <- oil_import_by_country %>%
+  group_by(year) %>%
+  mutate(prop = total_import / sum(total_import) * 100) %>%
+  filter(year == 2009) %>%
+  filter(prop > 5) %>%
+  ggplot(aes(y = prop, x = reorder(originName, prop))) +
+  geom_bar(stat = "identity") +
+  ggtitle("2009")
+
+exporters2023 <- oil_import_by_country %>%
+  group_by(year) %>%
+  mutate(prop = total_import / sum(total_import) * 100) %>%
+  filter(year == 2023) %>%
+  filter(prop > 5) %>%
+  ggplot(aes(y = prop, x = reorder(originName, prop))) +
+  geom_bar(stat = "identity") +
+  ggtitle("2023")
+
+exporters2009 + exporters2023 + plot_layout(nrow = 2)
+```
+
+Canada became a major exporter of crude oil to USA since 2009, completely dominating the market. In 2023 fraction of total import of crude oil originating in Canada was equal to around 60%, in comparison to slightly more than 20% in 2009.
+
+How did the import of crude oil from Canada only changes across the years?
+
+```{r}
+oil_import_canada_grade <- 
+  oil_country %>%
+  filter(originName == "Canada") %>%
+  group_by(year, gradeName) %>%
+  summarise(total_import = sum(quantity)) %>%
+  mutate(gradeName = ifelse(gradeName == "Heavy Sour", gradeName, "Other")) 
+
+  oil_import_canada_grade %>%
+  ggplot(aes(x = year, y = total_import, fill = gradeName)) +
+  geom_bar(stat = "identity")
+```
+
+Total import from Canada has been systematically increasing since 2009. Moreover, majority of imported oil was Heavy Sour oil and proportion of this grade increased relative to other grades.
+
+How large was the increase?
+```{r}
+oil_import_canada_grade %>%
+  group_by(year, gradeName) %>%
+  summarise(total_import = sum(total_import)) %>%
+  ungroup() %>%
+  group_by(year) %>%
+  mutate(prop = total_import / sum(total_import) * 100) %>%
+  arrange(year, rev(gradeName)) %>%
+  mutate(label_y = cumsum(prop) - 0.5 * prop) %>% # Create y positions for labels
+  ggplot(aes(x = year, y = prop, fill = gradeName)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  geom_text(aes(label = round(prop), y = label_y), color = "black") +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+```{r}
+oil_import_canada_grade %>%
+  group_by(year, gradeName) %>%
+  summarise(total_import = sum(total_import)) %>%
+  ungroup() %>%
+  group_by(year) %>%
+  mutate(prop = total_import / sum(total_import) * 100) %>%
+  arrange(year, rev(gradeName)) %>%
+  mutate(label_y = cumsum(prop) - 0.5 * prop) # Create y positions for labels
+```
+
+
+
+
+```{r}
+oil_country %>%
+  filter((originName == "Canada" | originName == "Saudi Arabia" | originName == "Mexico"), year < 2024) %>%
+  group_by(year, originName) %>%
+  summarise(total_import = sum(quantity)) %>%
+  ggplot(aes(x = year, y = total_import, color = originName)) +
+  geom_line()
+```
+
+
+
+
+
+
+
+

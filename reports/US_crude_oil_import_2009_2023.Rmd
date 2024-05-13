@@ -1,0 +1,120 @@
+---
+title: "Crude oil imports in years 2009 - 2023"
+author: "Krzysztof Urbaniec"
+date: "2024-05-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(max.print = 30)
+
+library(forcats)
+library(knitr)
+library(tidyverse)
+library(sf)
+
+source("../scripts/Plots.R")
+source("../scripts/data_preparation.R")
+
+oil <- as_tibble(read.csv("../data/USOilImports.csv"))
+oil <- oil %>% filter(destinationTypeName == "Port", year < 2024, originTypeName == "Country")
+oil_weight_fraction <- prepare_data_weight_fractions(oil)
+oil_import_montly <- prepare_data_total_import_monthly(oil)
+oil_import_major_suppliers_2023 <- prepare_data_major_suppliers_2023(oil)
+oil_import_by_country <- prepare_data_oil_import_by_country(oil)
+world_map_coords <- get_world_geojson()
+choropleth_data_2009 <- prepare_data_suppliers_2009_choropleth(oil_import_by_country, world_map_coords)
+```
+
+## Data
+**Source:** The data set used to generate this report was downloaded from Kaggle: https://www.kaggle.com/datasets/alistairking/u-s-crude-oil-imports
+
+It contains information about quantities of imported crude oil (measured in thousands of barrels) between 2009 and 2024, although the data for 2024 is available only for January. The data set uses various criteria to classify both the sources (division into individual countries, OPEC/non-OPEC countries, regions) and destinations (ports and refineries). The data was filtered to contain only the imports attributed to particular countries (not regions or any other broad classification) and delivered US ports. The data for 2024 (one month) was excluded.
+
+```{r data-filtering, eval=FALSE}
+oil <- as_tibble(read.csv("../data/USOilImports.csv"))
+oil <- oil %>% filter(destinationTypeName == "Port", year < 2024, originTypeName == "Country")
+```
+
+All conclusions were drawn on the basis of these information.
+
+## Total crude oil import 
+The plot below depicts how total import of crude oil in thousands of barrels changed over the years. 
+
+```{r total-import-plot, echo=FALSE}
+p1 <- plot_total_import(oil_import_montly) 
+p1 %>% savefig("total_import_vs_year.png", width = 8, height = 6)
+p1
+```
+
+Since 2009 total import of crude oil appears to decrease.  
+
+
+## Major suppliers
+It's interesting to note, what fraction of total import in given year can be attributed to a particular country, thus identifying major crude oil suppliers, and how this fraction changed over the years. In 2009 five major oil suppliers included Canada (20.8%), Venezuela (12.7%), Mexico (11.7%), Saudi Arabia (10.4%) and Nigeria (8.5%).  
+
+```{r top-5-suppliers-2009-table, echo=FALSE}
+oil %>%
+  filter(year == 2009) %>%
+  group_by(originName) %>%
+  summarise(total = sum(quantity)) %>%
+  mutate(percentage_total = round(total / sum(total) * 100,1)) %>%
+  arrange(desc(percentage_total)) %>%
+  rename(Country = originName, "Total (thousands barrels)" = total, Percentage = percentage_total) %>%
+  head(5) %>%
+  kable()
+```
+
+
+Geographical distribution of suppliers according to their share in US oil import is depicted in the choropleth map below.
+
+```{r suppliers-2009-choropleth, warning=FALSE, echo=FALSE, fig.asp=0.618, fig.width=8}
+p2 <- plot_oil_suppliers_2009_choropleth(choropleth_data_2009) 
+p2 %>% savefig("crude_oil_suppliers_2009_choropleth.png", width = 8, height = 6)
+p2 
+```
+
+Although Canada had the greatest share in the total oil import, many other countries played a significant role as well.
+
+In 2023, over a decade later, the situation has changed noticeably.
+
+```{r top-10-suppliers-2023-plot, echo=FALSE, warning=FALSE, fig.width=8, fig.asp=0.618}
+p3 <- plot_top_10_suppliers_2023(oil_import_major_suppliers_2023)
+p3  %>% savefig("import_major_suppliers_2023.png", width = 8, height = 6)
+p3
+```
+
+
+In 2023 Canada was the source of almost 60% of total crude oil import. The next two largest suppliers were Mexico (11.3%) and Saudi Arabia (5.4%). Unlike 2009, here the dominance of one country in the total quantity of imported commodity is clearly marked.
+
+## Grade of imported oil
+The data set provides information about the grade of imported crude oil. Crude oil in general can be divided into a few categories, according to its specific gravity (Heavy/Medium/Light) and to its sulfur content (Sweet/Sour). This information was utilized to visualize, how the composition of imported oil in terms of its grade changed between 2009 and 2023. The results are shown in the plot below.
+
+```{r weight-fraction-plot, warning=FALSE,  echo=FALSE, fig.width=6, fig.height=6}
+p4 <- plot_weight_import_fraction_vs_year(oil_weight_fraction) 
+p4 %>% savefig("weight_vs_year.png", width = 6, height = 6)
+p4
+```
+
+Since 2009, the import of heavy crude oil has increased by 20%, while the import of medium and light crude oils declined by approximately 9% and 12%, respectively.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
