@@ -2,7 +2,7 @@
 title: "Crude oil imports in years 2009 - 2023"
 author: "Krzysztof Urbaniec"
 date: "2024-05-13"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
@@ -30,7 +30,7 @@ choropleth_data_2009 <- prepare_data_suppliers_2009_choropleth(oil_import_by_cou
 ## Data
 **Source:** The data set used to generate this report was downloaded from Kaggle: https://www.kaggle.com/datasets/alistairking/u-s-crude-oil-imports
 
-It contains information about quantities of imported crude oil (measured in thousands of barrels) between 2009 and 2024, although the data for 2024 is available only for January. The data set uses various criteria to classify both the sources (division into individual countries, OPEC/non-OPEC countries, regions) and destinations (ports and refineries). The data was filtered to contain only the imports attributed to particular countries (not regions or any other broad classification) and delivered US ports. The data for 2024 (one month) was excluded.
+It contains information about quantities of imported crude oil (measured in thousands of barrels) between 2009 and 2024, although the data for 2024 is available only for January. The data set uses various criteria to classify both the sources (division into individual countries, OPEC/non-OPEC countries, regions) and destinations (ports and refineries). The data was filtered to contain only the imports attributed to particular countries (not regions or any other broad classification) and delivered to US ports. The data for 2024 (one month) was excluded.
 
 ```{r data-filtering, eval=FALSE}
 oil <- as_tibble(read.csv("../data/USOilImports.csv"))
